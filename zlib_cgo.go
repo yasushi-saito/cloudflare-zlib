@@ -19,7 +19,6 @@ void zs_inflate_end(char *stream);
 import "C"
 
 import (
-	"log"
 	"fmt"
 	"io"
 	"unsafe"
@@ -37,7 +36,7 @@ type reader struct {
 	inBuf   []byte
 	inAvail []byte // part of inBuf that's yet to be inflated
 	err     error
-	rErr    error // Error from r. Maybe io.EOF
+	eof     bool // true if in reaches io.EOF
 }
 
 const defaultBufferSize = 1 << 20
@@ -71,33 +70,42 @@ func (z *reader) Close() error {
 
 // Read implements io.Reader.
 func (z *reader) Read(out []byte) (int, error) {
-	log.Printf("Read w/ input %d", len(out))
 	var orgOut = out
 	for z.err == nil && len(out) > 0 {
 		outLen := C.int(len(out))
 		ret := C.zs_inflate(&z.zs[0], unsafe.Pointer(&out[0]), &outLen)
 		if ret == -99 {
-			if z.rErr != nil {
+			if z.eof {
+				z.err = io.EOF
 				break
 			}
-			var n int
-			n, z.rErr = z.in.Read(z.inBuf)
-			if n <= 0 {
-				z.err = z.rErr
+			n, err := z.in.Read(z.inBuf)
+			if err != nil {
+				if err != io.EOF {
+					z.err = err
+					break
+				}
+				z.eof = true
+				// fall through
+			}
+			if n == 0 {
+				if !z.eof {
+					panic(z)
+				}
+				z.err = io.EOF
 				break
 			}
-			if z.rErr != nil && z.rErr != io.EOF {
-				z.err = z.rErr
-			}
-			C.zs_inflate_with_input(&z.zs[0], unsafe.Pointer(&z.inBuf[0]), C.int(n), unsafe.Pointer(&out[0]), &outLen)
-		} else if ret == C.Z_STREAM_END {
-			ret = C.Z_OK
-		} else if ret == C.Z_STREAM_END {
+			ret = C.zs_inflate_with_input(&z.zs[0], unsafe.Pointer(&z.inBuf[0]), C.int(n), unsafe.Pointer(&out[0]), &outLen)
+		}
+		if ret != C.Z_STREAM_END && ret != C.Z_OK {
 			z.err = zlibReturnCodeToError(ret)
 			break
 		}
 		nOut := len(out) - int(outLen)
 		out = out[nOut:]
+		if ret == C.Z_STREAM_END {
+			break
+		}
 	}
 	return len(orgOut) - len(out), z.err
 }
