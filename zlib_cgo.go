@@ -6,14 +6,7 @@ package zlib
 
 #include <errno.h>
 #include "./zlib.h"
-
-extern int zs_inflate_init(char* stream);
-extern int zs_inflate(char* stream, void* out, int* out_bytes);
-extern int zs_inflate_with_input(char* stream, void* in, int in_bytes, void* out, int* out_bytes);
-extern int zs_inflate_avail_in(char* stream);
-extern int zs_inflate_avail_out(char* stream);
-extern int zs_get_errno();
-void zs_inflate_end(char *stream);
+#include "./zstream.h"
 
 */
 import "C"
@@ -31,15 +24,16 @@ import (
 type zstream [unsafe.Sizeof(C.z_stream{})]C.char
 
 type reader struct {
-	in      io.Reader
-	zs      zstream
-	inBuf   []byte
-	inAvail []byte // part of inBuf that's yet to be inflated
-	err     error
-	eof     bool // true if in reaches io.EOF
+	in         io.Reader
+	inConsumed bool    // true if zstream has finished consuming the current input buffer.
+	inEOF      bool    // true if in reaches io.EOF
+	zs         zstream // underlying zlib implementation.
+	inBuf      []byte
+	err        error
 }
 
-const defaultBufferSize = 1 << 20
+// defaultBufferSize is the default buffer size used by NewBuffer.
+const defaultBufferSize = 512 * 1024
 
 // NewReaderBuffer creates a gzip reader with default settings.
 func NewReader(r io.Reader) (io.ReadCloser, error) {
@@ -49,12 +43,13 @@ func NewReader(r io.Reader) (io.ReadCloser, error) {
 // NewReaderBuffer creates a new gzip reader with a given prefetch buffer size.
 func NewReaderBuffer(in io.Reader, bufSize int) (io.ReadCloser, error) {
 	z := &reader{
-		in:    in,
-		inBuf: make([]byte, bufSize),
+		in:         in,
+		inBuf:      make([]byte, bufSize),
+		inConsumed: true, // force in.Read
 	}
 	ec := C.zs_inflate_init(&z.zs[0])
 	if ec != 0 {
-		panic(ec)
+		return nil, zlibReturnCodeToError(ec)
 	}
 	return z, nil
 }
@@ -72,10 +67,15 @@ func (z *reader) Close() error {
 func (z *reader) Read(out []byte) (int, error) {
 	var orgOut = out
 	for z.err == nil && len(out) > 0 {
-		outLen := C.int(len(out))
-		ret := C.zs_inflate(&z.zs[0], unsafe.Pointer(&out[0]), &outLen)
-		if ret == -99 {
-			if z.eof {
+		var (
+			outLen     = C.int(len(out))
+			ret        C.int
+			inConsumed C.int
+		)
+		if !z.inConsumed {
+			ret = C.zs_inflate(&z.zs[0], unsafe.Pointer(&out[0]), &outLen, &inConsumed)
+		} else {
+			if z.inEOF {
 				z.err = io.EOF
 				break
 			}
@@ -85,18 +85,19 @@ func (z *reader) Read(out []byte) (int, error) {
 					z.err = err
 					break
 				}
-				z.eof = true
+				z.inEOF = true
 				// fall through
 			}
 			if n == 0 {
-				if !z.eof {
+				if !z.inEOF {
 					panic(z)
 				}
 				z.err = io.EOF
 				break
 			}
-			ret = C.zs_inflate_with_input(&z.zs[0], unsafe.Pointer(&z.inBuf[0]), C.int(n), unsafe.Pointer(&out[0]), &outLen)
+			ret = C.zs_inflate_with_input(&z.zs[0], unsafe.Pointer(&z.inBuf[0]), C.int(n), unsafe.Pointer(&out[0]), &outLen, &inConsumed)
 		}
+		z.inConsumed = (inConsumed != 0)
 		if ret != C.Z_STREAM_END && ret != C.Z_OK {
 			z.err = zlibReturnCodeToError(ret)
 			break

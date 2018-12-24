@@ -115,6 +115,6 @@ func BenchmarkInflateKlauspostGzip(b *testing.B) {
 func BenchmarkInflateCloudflareGzip(b *testing.B) {
 	benchmarkInflate(b, "/tmp/get-pip.py",
 		func(in io.Reader) (io.Reader,error) {
-			return czlib.NewReader(in)
+			return czlib.NewReaderBuffer(in, 512<<10)
 		})
 }

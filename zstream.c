@@ -1,3 +1,4 @@
+#include "./zstream.h"
 #include <errno.h>
 #include <stdlib.h>
 #include "./zlib.h"
@@ -26,30 +27,28 @@ int zs_inflate_avail_out(char* stream) {
 
 int zs_get_errno() { return errno; }
 
-int zs_inflate_with_input(char* stream, void* in, int in_bytes, void*out, int* out_bytes) {
+int zs_inflate_with_input(char* stream, void* in, int in_bytes, void* out,
+                          int* out_bytes, int* consumed_input) {
   z_streamp zs = (z_streamp)stream;
-  if (zs->avail_in != 0) {
+  if (zs->avail_in != 0 || in_bytes <= 0) {
     abort();
   }
   zs->avail_in = in_bytes;
   zs->next_in = in;
-  if (zs->avail_in == 0) {
-    abort();
-  }
-
   zs->next_out = out;
   zs->avail_out = *out_bytes;
   int ret = z_inflate((z_streamp)stream, Z_NO_FLUSH);
   if (ret == Z_OK || ret == Z_STREAM_END) {
     *out_bytes = zs->avail_out;
   }
+  *consumed_input = (zs->avail_in == 0);
   return ret;
 }
 
-int zs_inflate(char* stream, void* out, int* out_bytes) {
+int zs_inflate(char* stream, void* out, int* out_bytes, int* consumed_input) {
   z_streamp zs = (z_streamp)stream;
   if (zs->avail_in == 0) {
-    return -99;
+    abort();
   }
   zs->next_out = out;
   zs->avail_out = *out_bytes;
@@ -57,5 +56,6 @@ int zs_inflate(char* stream, void* out, int* out_bytes) {
   if (ret == Z_OK || ret == Z_STREAM_END) {
     *out_bytes = zs->avail_out;
   }
+  *consumed_input = (zs->avail_in == 0);
   return ret;
 }
