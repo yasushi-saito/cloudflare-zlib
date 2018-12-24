@@ -1,3 +1,3 @@
 #!/bin/sh
 export CGO_CFLAGS_ALLOW=-m.*
-go build .
+go test .
