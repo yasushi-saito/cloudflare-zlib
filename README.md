@@ -7,18 +7,28 @@ Go bindings for cloudflare zlib fork (https://github.com/cloudflare/zlib).
 
 As of 2018-12-24
 
-- only tested for Linux amd64 + cgo.
-- only the reader is implemented.
+- Only tested for Linux amd64 + cgo.
+- You need to set
+
+```
+export CGO_CFLAGS_ALLOW=-m.*
+```
+
+  before building.
 
 
 ## Benchmark
 
-As of 2018-12-24
+As of 2018-12-24.
 
-It's over 2x faster than the standard implementation.
+File: 240MB text file.
+The file is compressed 5.2x using any of the systems tested.
 
 ```
-BenchmarkInflateStandardGzip-8     	     100	  16950147 ns/op
-BenchmarkInflateKlauspostGzip-8    	     100	  20263415 ns/op
-BenchmarkInflateCloudflareGzip-8   	     200	   6976053 ns/op
+BenchmarkInflateStandardGzip-8     	     100	  18325651 ns/op
+BenchmarkInflateKlauspostGzip-8    	     100	  21908492 ns/op
+BenchmarkInflateCloudflareGzip-8   	     200	   7312906 ns/op
+BenchmarkDeflateStandardGzip-8     	       1	11806820047 ns/op
+BenchmarkDeflateKlauspostGzip-8    	       1	3039031194 ns/op
+BenchmarkDeflateCloudflareGzip-8   	       1	3033015128 ns/op
 ```

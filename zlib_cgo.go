@@ -111,6 +111,94 @@ func (z *reader) Read(out []byte) (int, error) {
 	return len(orgOut) - len(out), z.err
 }
 
+type writer struct {
+	out    io.Writer
+	zs     zstream // underlying zlib implementation.
+	outBuf []byte
+	err    error
+}
+
+// NewReaderBuffer creates a gzip reader with default settings.
+func NewWriter(w io.Writer) (io.WriteCloser, error) {
+	return NewWriterLevel(w, -1, defaultBufferSize)
+}
+
+func NewWriterLevel(w io.Writer, level int, bufSize int) (io.WriteCloser, error) {
+	z := &writer{
+		out:    w,
+		outBuf: make([]byte, bufSize),
+	}
+	ec := C.zs_deflate_init(&z.zs[0], C.int(level))
+	if ec != 0 {
+		return nil, zlibReturnCodeToError(ec)
+	}
+	return z, nil
+}
+
+func (z *writer) push(data []byte) error {
+	n, err := z.out.Write(data)
+	if err != nil {
+		return err
+	}
+	if n < len(data) { // shouldn't happen in practice
+		return fmt.Errorf("zlib: n=%d, outLen=%d", n, len(data))
+	}
+	return nil
+}
+
+// Write implements io.Writer.
+func (z *writer) Close() error {
+	for {
+		outLen := C.int(len(z.outBuf))
+		ret := C.zs_deflate_end(&z.zs[0], unsafe.Pointer(&z.outBuf[0]), &outLen)
+		if ret != 0 && ret != C.Z_STREAM_END {
+			return zlibReturnCodeToError(ret)
+		}
+		nOut := len(z.outBuf) - int(outLen)
+		if err := z.push(z.outBuf[:nOut]); err != nil {
+			return err
+		}
+		if ret == C.Z_STREAM_END {
+			return nil
+		}
+	}
+}
+
+// Write implements io.Writer.
+func (z *writer) Write(in []byte) (int, error) {
+	if len(in) == 0 {
+		return 0, nil
+	}
+	var outLen = C.int(len(z.outBuf))
+	ret := C.zs_deflate_with_input(&z.zs[0], unsafe.Pointer(&in[0]), C.int(len(in)),
+		unsafe.Pointer(&z.outBuf[0]), &outLen)
+	if ret != 0 {
+		return 0, zlibReturnCodeToError(ret)
+	}
+	nOut := len(z.outBuf) - int(outLen)
+	if err := z.push(z.outBuf[:nOut]); err != nil {
+		return 0, err
+	}
+	if outLen > 0 { // outbuf didn't fillup, i.e., the input was fully consumed.
+		return len(in), nil
+	}
+	for {
+		outLen = C.int(len(z.outBuf))
+		ret = C.zs_deflate(&z.zs[0], unsafe.Pointer(&z.outBuf[0]), &outLen)
+		if ret != 0 {
+			return 0, zlibReturnCodeToError(ret)
+		}
+		nOut := len(z.outBuf) - int(outLen)
+		if err := z.push(z.outBuf[:nOut]); err != nil {
+			return 0, err
+		}
+		if outLen > 0 { // outbuf didn't fillup, i.e., the input was fully consumed.
+			break
+		}
+	}
+	return len(in), nil
+}
+
 var zlibErrors = map[C.int]error{
 	C.Z_OK:            nil,
 	C.Z_STREAM_END:    io.EOF,
