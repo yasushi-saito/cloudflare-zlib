@@ -1,3 +1,5 @@
+// +build cgo
+
 package zlib
 
 /*
@@ -35,7 +37,7 @@ type reader struct {
 // defaultBufferSize is the default buffer size used by NewBuffer.
 const defaultBufferSize = 512 * 1024
 
-// NewReaderBuffer creates a gzip reader with default settings.
+// NewReader creates a gzip reader with 512KB buffer.
 func NewReader(r io.Reader) (io.ReadCloser, error) {
 	return NewReaderBuffer(r, defaultBufferSize)
 }
@@ -118,11 +120,14 @@ type writer struct {
 	err    error
 }
 
-// NewReaderBuffer creates a gzip reader with default settings.
+// NewWriter creates a gzip writer with default settings.
 func NewWriter(w io.Writer) (io.WriteCloser, error) {
 	return NewWriterLevel(w, -1, defaultBufferSize)
 }
 
+// NewWriterLevel creates a gzip writer. Level is the compression level; -1
+// means the default level. bufSize is the internal buffer size. It defaults to
+// 512KB.
 func NewWriterLevel(w io.Writer, level int, bufSize int) (io.WriteCloser, error) {
 	z := &writer{
 		out:    w,
