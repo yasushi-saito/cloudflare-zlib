@@ -1,10 +1,10 @@
-// +build cgo
+// +build cgo,amd64
 
 package zlib
 
 /*
 
-#cgo CFLAGS: -O3 -DHAS_PCLMUL -mpclmul -DHAS_SSE42 -msse4.2 -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN
+#cgo CFLAGS: -march=ivybridge -std=c99 -Wall -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN -DHAVE_INTERNAL -DHAVE_BUILTIN_CTZL -DMEDIUM_STRATEGY -DX86_64 -DX86_NOCHECK_SSE2 -DUNALIGNED_OK -DUNROLL_LESS -DX86_CPUID -DX86_SSE2_FILL_WINDOW -DX86_SSE4_2_CRC_HASH -DX86_SSE4_2_CRC_INTRIN -DX86_PCLMULQDQ_CRC -DX86_QUICK_STRATEGY -I.
 
 #include <errno.h>
 #include "./zlib.h"
@@ -14,11 +14,10 @@ package zlib
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"unsafe"
-
-	"errors"
 
 	"golang.org/x/sys/unix"
 )
@@ -75,7 +74,7 @@ func (z *reader) Read(out []byte) (int, error) {
 			inConsumed C.int
 		)
 		if !z.inConsumed {
-			ret = C.zs_inflate(&z.zs[0], unsafe.Pointer(&out[0]), &outLen, &inConsumed)
+			ret = C.zs_inflate(&z.zs[0], nil, 0, unsafe.Pointer(&out[0]), &outLen, &inConsumed)
 		} else {
 			if z.inEOF {
 				z.err = io.EOF
@@ -97,7 +96,7 @@ func (z *reader) Read(out []byte) (int, error) {
 				z.err = io.EOF
 				break
 			}
-			ret = C.zs_inflate_with_input(&z.zs[0], unsafe.Pointer(&z.inBuf[0]), C.int(n), unsafe.Pointer(&out[0]), &outLen, &inConsumed)
+			ret = C.zs_inflate(&z.zs[0], unsafe.Pointer(&z.inBuf[0]), C.int(n), unsafe.Pointer(&out[0]), &outLen, &inConsumed)
 		}
 		z.inConsumed = (inConsumed != 0)
 		if ret != C.Z_STREAM_END && ret != C.Z_OK {
@@ -107,6 +106,10 @@ func (z *reader) Read(out []byte) (int, error) {
 		nOut := len(out) - int(outLen)
 		out = out[nOut:]
 		if ret == C.Z_STREAM_END {
+			ret = C.zs_inflate_reset(&z.zs[0])
+			if ret != C.Z_OK {
+				z.err = zlibReturnCodeToError(ret)
+			}
 			break
 		}
 	}
@@ -151,7 +154,7 @@ func (z *writer) push(data []byte) error {
 	return nil
 }
 
-// Write implements io.Writer.
+// Close implements io.Closer
 func (z *writer) Close() error {
 	for {
 		outLen := C.int(len(z.outBuf))
@@ -175,7 +178,7 @@ func (z *writer) Write(in []byte) (int, error) {
 		return 0, nil
 	}
 	var outLen = C.int(len(z.outBuf))
-	ret := C.zs_deflate_with_input(&z.zs[0], unsafe.Pointer(&in[0]), C.int(len(in)),
+	ret := C.zs_deflate(&z.zs[0], unsafe.Pointer(&in[0]), C.int(len(in)),
 		unsafe.Pointer(&z.outBuf[0]), &outLen)
 	if ret != 0 {
 		return 0, zlibReturnCodeToError(ret)
@@ -189,7 +192,7 @@ func (z *writer) Write(in []byte) (int, error) {
 	}
 	for {
 		outLen = C.int(len(z.outBuf))
-		ret = C.zs_deflate(&z.zs[0], unsafe.Pointer(&z.outBuf[0]), &outLen)
+		ret = C.zs_deflate(&z.zs[0], nil, 0, unsafe.Pointer(&z.outBuf[0]), &outLen)
 		if ret != 0 {
 			return 0, zlibReturnCodeToError(ret)
 		}

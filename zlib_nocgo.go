@@ -1,4 +1,4 @@
-// +build !cgo
+// +build !cgo !amd64
 
 package zlib
 
